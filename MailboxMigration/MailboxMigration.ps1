@@ -17,19 +17,26 @@ Write-Host "Enter Azure Credentials:" -ForegroundColor Green
 Import-Module AzureADPreview -UseWindowsPowershell
 Connect-AzureAD 
 
-$inputCSV = Import-CSV -Path ".\25crossroads.csv"     # Path to CSV file for import
+###################################################################################################
+#######       CHANGE THESE PATHS TO THE ACTUAL FILES BEING USED FOR THE MIGRATION USERS     #######
+###################################################################################################
+
+$inputCSV = Import-CSV -Path ".\25crossroads.csv"           # Path to CSV file containing the users being migrated.
+$mobileUserCSV = Import-CSV -Path ".\mobileusers.csv"       # Path to CSV file containing the users that are approved for Mobile devices
 $groupName = "Intune Users Group Default Apps Mobile"       # Name of Intune Group to add users to
+
+###################################################################################################
+#######                                     END CHANGES                                     #######
+###################################################################################################
+
+# Licenses to search users for
 $searchLicenses = @{}
 $searchLicenses.Add("efb87545-963c-4e0d-99df-69c6916d9eb0","Exchange Enterprise")
 $searchLicenses.Add("9aaf7827-d63c-4b61-89c3-182f06f82e5c","Exchange Standard")
-$searchLicenses.Add("4a82b400-a79f-41a4-b4e2-e94f5787b113","Exchange Kiosk")                       # Licenses to search users for
+$searchLicenses.Add("4a82b400-a79f-41a4-b4e2-e94f5787b113","Exchange Kiosk")
 
 $moveReport = @()                                           # Initialize report variables. 
-$sendAsReport = @()                                         # This will be used to output the 
-$sendOnBehalfReport = @()                                   # results of the move to the CSV files
-$mailboxForwardingReport = @()                              
-
-
+                                        
 
 
 foreach ($line in $inputCSV) {
@@ -41,6 +48,7 @@ foreach ($line in $inputCSV) {
     $userLicenses = $user.AssignedPlans
     #$userMailbox = get-mailbox -Identity "$smtp"
     $licensed = $false
+    $mobile = $false
 
     # Check to see if user is licensed.
     foreach ($license in $userLicenses) {
@@ -53,28 +61,17 @@ foreach ($line in $inputCSV) {
         }
     }
 
-    # The below items need to be checked on-prem and exported separately because the org is in hybrid mode.
-
-    # Check if sendas rights on this mailbox
-    #$sendAsRights = $userMailbox| get-adpermission | where-object {$_.ExtendedRights -like "*send*" -and -not ($_.User -match "NT AUTHORITY")} | select-object User
-
-    # Check send on behalf rights on this mailbox
-    #$sendOnBehalfRights = $userMailbox | where-object {$_.GrantSendOnBehalfTo -ne $null} | select-object GrantSendOnBehalfTo
-
-    # Check if mailbox forwarding is enabled
-    #$mailboxForwarding = $userMailbox | where-object {$_.ForwardingSmtpAddress -ne $null} | select-object ForwardingSmtpAddress
-
     if ($licensed -eq $true) {
         # User is licensed so continue the move.
         Write-Host "Finalizing move request for $smtp" -ForegroundColor cyan
         Resume-MoveRequest $smtp
-        Add-AzureAdGroupMember -objectId $group.ObjectId -RefObjectId $user.ObjectId
-        Write-Host "Added $($user.DisplayName) to $groupName" -ForegroundColor cyan
 
-        # Update reports
-        $sendAsReport += [pscustomobject]@{"PrimarySMTPAddress" = $smtp; "SendAs" = $sendAsRights}
-        $sendOnBehalfReport += [pscustomobject]@{"PrimarySMTPAddress" = $smtp; "SendOnBehalfOf" = $sendOnBehalfRights}
-        $mailboxForwardingReport += [pscustomobject]@{"PrimarySMTPAddress" = $smtp; "MailboxForwarding" = $mailboxForwarding}
+        # Check if the user smtp address is in the list of users approved for mobile
+        if ($mobileUserCSV.PrimarySmtpAddress -contains $smtp) {
+            Add-AzureAdGroupMember -objectId $group.ObjectId -RefObjectId $user.ObjectId
+            Write-Host "Added $($user.DisplayName) to $groupName" -ForegroundColor cyan
+            $mobile = $true
+        }
 
     } else {
         # User is not licensed. Report this and abort the move.
@@ -85,17 +82,12 @@ foreach ($line in $inputCSV) {
     $moveReport += [pscustomobject]@{
         "PrimarySMTPAddress" = $smtp
         "Migrated" = $licensed
-        "sendAsRights" = $sendAsRights
-        "sendOnBehalfRights" = $sendOnBehalfRights
-        "mailboxForwarding" = $mailboxForwarding
+        "Added to Mobile Group" = $mobile
     }
 
 }
 
 # Output all CSV Files:
-$sendAsReport | export-csv "$((Get-Date).ToString("yyyyMMdd_HHmmss"))_sendAsReport.csv" -NoTypeInformation
-$sendOnBehalReport | export-csv "$((Get-Date).ToString("yyyyMMdd_HHmmss"))_sendOnBehalfReport.csv" -NoTypeInformation
-$mailboxForwardingReport | export-csv "$((Get-Date).ToString("yyyyMMdd_HHmmss"))_mailboxForwardingReport.csv" -NoTypeInformation
 $moveReport | export-csv "$((Get-Date).ToString("yyyyMMdd_HHmmss"))_moveReport.csv" -NoTypeInformation
 
 Stop-Transcript
