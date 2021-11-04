@@ -8,14 +8,15 @@
 Start-Transcript
 
 Write-Host "Enter Exchange Online Credentials:" -ForegroundColor Green
-#$azure_creds = Get-Credential
 Import-Module ExchangeOnlineManagement
 Connect-ExchangeOnline 
 
 Write-Host "Enter Azure Credentials:" -ForegroundColor Green
-#$exo_creds = Get-Credential
 Import-Module AzureADPreview -UseWindowsPowershell
 Connect-AzureAD 
+
+Write-Host "Enter credentials for MobileIron:" -ForegroundColor Green
+$cred = Get-Credential
 
 ###################################################################################################
 #######       CHANGE THESE PATHS TO THE ACTUAL FILES BEING USED FOR THE MIGRATION USERS     #######
@@ -37,7 +38,9 @@ $searchLicenses.Add("4a82b400-a79f-41a4-b4e2-e94f5787b113","Exchange Kiosk")
 
 $moveReport = @()                                           # Initialize report variables. 
                                         
-
+# Get PartitionId for MobileIron
+$dmPartitionId = (Invoke-RestMethod -Method 'Get' -Uri https://na1.mobileiron.com/api/v1/metadata/tenant -Credential $cred -Authentication Basic).result.defaultDmPartitionId
+write-host "DEBUG: dmPartitionId: $dmPartitionId"
 
 foreach ($line in $inputCSV) {
 
@@ -63,14 +66,52 @@ foreach ($line in $inputCSV) {
 
     if ($licensed -eq $true) {
         # User is licensed so continue the move.
+        ##################################################
         Write-Host "Finalizing move request for $smtp" -ForegroundColor cyan
         Resume-MoveRequest $smtp
 
         # Check if the user smtp address is in the list of users approved for mobile
-        if ($mobileUserCSV.PrimarySmtpAddress -contains $smtp) {
+        ##################################################
+        if ($mobileUserCSV.PrimarySmtpAddress -contains "$smtp") {
+
+            # User is approved for mobile use so add them to the InTune group.
             Add-AzureAdGroupMember -objectId $group.ObjectId -RefObjectId $user.ObjectId
             Write-Host "Added $($user.DisplayName) to $groupName" -ForegroundColor cyan
             $mobile = $true
+
+            # Now check the user for MobileIron device registrations.
+            write-host "Checking $smtp for MobileIron Devices..." -ForegroundColor Blue
+
+            # Get list of devices assigned to the user.
+            $devices = (Invoke-RestMethod -Method 'Get' -Uri "https://na1.mobileiron.com/api/v1/device?q=&dmPartitionId=$dmPartitionId&fq=EMAILADDRESS+EQ+$smtp" -Credential $cred -Authentication Basic).result.searchResults
+            if ($devices -eq $null) {
+                write-host "User $smtp did not have any devices!" -ForegroundColor Yellow
+            } else {
+                
+                # If the user has devices, then loop through them and retire them one at a time.
+                foreach ($device in $devices) {
+                    write-host "Checking $smtp device $($device.prettyModel)"
+
+                    # If the device is not already retired or pending retirement, then retire it.
+                    if ($device.registrationState -ne "RETIRED" -and $device.registrationState -ne "RETIRE PENDING") {
+                        $deviceId = $device.id
+                        $deviceModel = $device.prettyModel
+                        $body = @{ids="$deviceId"}
+
+                        # Retire the device
+                        $result = (Invoke-RestMethod -Method ‘Put’ -Uri 'https://na1.mobileiron.com/api/v1/device/retire' -Form $body -Credential $cred -Authentication Basic)
+                        if ($result.error -eq $null) {
+                            write-host "Successfully retired device $deviceModel for user $smtp" -ForegroundColor Green
+                        }
+                    } else {
+                        # If the device is already retired, notify the user of this and move on.
+                        write-host "Device $($device.prettyModel) already retired. Skipping..."
+                    }
+                    # Sleep for 2 seconds to ease API restrictions.
+                    start-sleep -s 2
+                }
+
+            }
         }
 
     } else {
