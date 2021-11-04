@@ -86,6 +86,7 @@ foreach ($line in $inputCSV) {
             $devices = (Invoke-RestMethod -Method 'Get' -Uri "https://na1.mobileiron.com/api/v1/device?q=&dmPartitionId=$dmPartitionId&fq=EMAILADDRESS+EQ+$smtp" -Credential $cred -Authentication Basic).result.searchResults
             if ($devices -eq $null) {
                 write-host "User $smtp did not have any devices!" -ForegroundColor Yellow
+                $deviceCount = 0
             } else {
                 
                 # If the user has devices, then loop through them and retire them one at a time.
@@ -110,7 +111,7 @@ foreach ($line in $inputCSV) {
                     # Sleep for 2 seconds to ease API restrictions.
                     start-sleep -s 2
                 }
-
+                $deviceCount = $devices.count
             }
         }
 
@@ -124,6 +125,7 @@ foreach ($line in $inputCSV) {
         "PrimarySMTPAddress" = $smtp
         "Migrated" = $licensed
         "Added to Mobile Group" = $mobile
+        "Mobile Devices Retired" = $deviceCount
     }
 
 }
