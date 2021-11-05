@@ -12,7 +12,7 @@ Import-Module ExchangeOnlineManagement
 Connect-ExchangeOnline 
 
 Write-Host "Enter Azure Credentials:" -ForegroundColor Green
-Import-Module AzureADPreview -UseWindowsPowershell
+Import-Module AzureAD
 Connect-AzureAD 
 
 Write-Host "Enter credentials for MobileIron:" -ForegroundColor Green
