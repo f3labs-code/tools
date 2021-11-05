@@ -12,7 +12,7 @@ Import-Module ExchangeOnlineManagement
 Connect-ExchangeOnline 
 
 Write-Host "Enter Azure Credentials:" -ForegroundColor Green
-Import-Module AzureAD
+Import-Module AzureAD -UseWindowsPowershell
 Connect-AzureAD 
 
 Write-Host "Enter credentials for MobileIron:" -ForegroundColor Green
@@ -117,7 +117,7 @@ foreach ($line in $inputCSV) {
 
     } else {
         # User is not licensed. Report this and abort the move.
-        Write-Host "$smtp is not licensed in 365. Aborting move!" -ForegroundColor red
+        Write-Host "$smtp is not licensed in 365. Skipping move!" -ForegroundColor red
     }
 
     # Update move report
